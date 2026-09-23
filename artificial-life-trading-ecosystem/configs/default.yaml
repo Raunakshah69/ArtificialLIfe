@@ -1,0 +1,12 @@
+project_name: artificial-life-trading-ecosystem
+seed: 42
+log_level: INFO
+population_size: 128
+generations: 50
+mutation_rate: 0.05
+starting_capital: 10000.0
+transaction_cost: 0.001
+forecast_window: 30
+hidden_units: 64
+learning_rate: 0.001
+batch_size: 32

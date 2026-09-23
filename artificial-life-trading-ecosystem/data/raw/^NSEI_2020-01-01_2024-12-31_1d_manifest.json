@@ -1,0 +1,11 @@
+{
+  "ticker": "^NSEI",
+  "start_date": "2020-01-01",
+  "end_date": "2024-12-31",
+  "interval": "1d",
+  "source": "yfinance",
+  "raw_filename": "^NSEI_2020-01-01_2024-12-31_1d.csv",
+  "row_count": 1236,
+  "download_timestamp": "2026-09-23T11:04:02.217763+00:00",
+  "sha256": "6d084c1859adef4a265332c92a80a747569a583c6671fec212ad9c0c0bd2d2f2"
+}
