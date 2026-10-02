@@ -19,6 +19,7 @@ class LineageRecord:
     reproduction_method: str = "sexual"
     mutation_applied: bool = False
     immigrant: bool = False
+    status: str = "READY"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

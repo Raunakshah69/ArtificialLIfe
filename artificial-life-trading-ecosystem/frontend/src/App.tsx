@@ -11,23 +11,26 @@ import { LineagePage } from './pages/LineagePage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PopulationPage } from './pages/PopulationPage';
 import { ReplayPage } from './pages/ReplayPage';
+import { SimulationProvider } from './contexts/SimulationProvider';
 
 export default function App() {
   return (
     <BrowserRouter>
       <ExperimentProvider>
-        <Routes>
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<OverviewPage />} />
-            <Route path="/forecasting" element={<ForecastingPage />} />
-            <Route path="/population" element={<PopulationPage />} />
-            <Route path="/lineage" element={<LineagePage />} />
-            <Route path="/agents" element={<AgentsPage />} />
-            <Route path="/backtest" element={<BacktestPage />} />
-            <Route path="/replay" element={<ReplayPage />} />
-            <Route path="/experiment" element={<ExperimentPage />} />
-          </Route>
-        </Routes>
+        <SimulationProvider>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<OverviewPage />} />
+              <Route path="/forecasting" element={<ForecastingPage />} />
+              <Route path="/population" element={<PopulationPage />} />
+              <Route path="/lineage" element={<LineagePage />} />
+              <Route path="/agents" element={<AgentsPage />} />
+              <Route path="/backtest" element={<BacktestPage />} />
+              <Route path="/replay" element={<ReplayPage />} />
+              <Route path="/experiment" element={<ExperimentPage />} />
+            </Route>
+          </Routes>
+        </SimulationProvider>
       </ExperimentProvider>
     </BrowserRouter>
   );

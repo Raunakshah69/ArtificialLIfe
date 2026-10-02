@@ -657,43 +657,35 @@ def run_development_experiment(*, population_size: int = 100, generations: int |
     )
     population = Population(population_cfg, forecaster=forecaster, seed=cfg.seed)
 
-    epoch_chunks = np.array_split(np.arange(len(development_market)), max(1, min(cfg.generations, len(development_market))))
+    generation_days = int(settings.generation_trading_days)
+    epoch_chunks = [
+        np.arange(start, min(start + generation_days, len(development_market)))
+        for start in range(0, len(development_market), generation_days)
+    ]
+    if len(epoch_chunks) < cfg.generations:
+        cfg.generations = len(epoch_chunks)
     total_runtime_start = time.perf_counter()
+    evaluated_agents: list[Any] = []
+    final_survivors: list[Any] = []
     for generation_idx, indices in enumerate(epoch_chunks[: max(1, cfg.generations)]):
         epoch = development_market.iloc[list(indices)].reset_index(drop=True).copy()
         current_start = time.perf_counter()
-        population.generation = generation_idx
         population.evaluate_generation(epoch, feature_columns=feature_columns)
         population.mark_dead_agents()
-        survivors = population.surviving_agents()
-        if not survivors:
-            population.agents = population.zero_survivor_fallback(target_count=population.population_size)
-        else:
-            next_agents = population.preserve_elite(survivors[: min(population.elite_count, len(survivors))]) if population.elite_count else []
-            while len(next_agents) < population.population_size:
-                parents = population.capital_weighted_selection(population.eligible_parents() or list(population.agents))
-                if len(parents) >= 2:
-                    parent_a, parent_b = parents[0], parents[1]
-                    next_agents.append(population.create_child(parent_a=parent_a, parent_b=parent_b, generation=generation_idx + 1, method="sexual"))
-                elif parents:
-                    next_agents.append(population.create_child(parent_a=parents[0], parent_b=None, generation=generation_idx + 1, method="asexual"))
-                else:
-                    next_agents.extend(population.make_immigrants(count=max(1, population.population_size - len(next_agents))))
-                    break
-            if len(next_agents) < population.population_size:
-                next_agents.extend(population.make_immigrants(count=population.population_size - len(next_agents)))
-            population.agents = next_agents[: population.population_size]
-        population.generation = generation_idx + 1
         generation_summary = compute_generation_metrics(population, generation_idx, epoch, starting_capital=cfg.starting_capital)
         generation_history.append(generation_summary)
+        evaluated_agents.extend(population.agents)
+        final_survivors = population.surviving_agents()
+        if generation_idx + 1 < len(epoch_chunks[: max(1, cfg.generations)]):
+            population.reproduce_next_generation()
         _ = time.perf_counter() - current_start
 
     total_runtime = time.perf_counter() - total_runtime_start
-    final_best = max(population.agents, key=lambda agent: float(getattr(agent, "cash", 0.0) if agent.cash is not None else 0.0)) if population.agents else None
+    final_best = max(evaluated_agents, key=lambda agent: float(agent.statistics.get("ending_capital", agent.cash))) if evaluated_agents else None
     if final_best is None:
         raise ValueError("Population evaluation did not create any agents.")
-    lineage_summary = compute_lineage_extinction(population.lineage, living_agents=population.agents)
-    lineage_identity = identify_best_lineage(population.lineage, agents=population.agents)
+    lineage_summary = compute_lineage_extinction(population.lineage, living_agents=final_survivors)
+    lineage_identity = identify_best_lineage(population.lineage, agents=evaluated_agents)
     manual_baseline = ManualBaselineAgent(agent_id="manual_baseline", generation=0, genome=final_best.genome, starting_capital=cfg.starting_capital, current_capital=cfg.starting_capital, cash=cfg.starting_capital)
     engine = TradingEngine(transaction_cost=cfg.transaction_cost)
     engine.simulate(manual_baseline, development_market, forecaster=forecaster, feature_columns=feature_columns)

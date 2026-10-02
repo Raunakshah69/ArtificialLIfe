@@ -30,13 +30,27 @@ The focus here is a clean package layout, configuration system, utilities, and i
 
 ## Quick start
 
+Python 3.11 is the supported project environment. TensorFlow's forecasting tests are not available in the default Python 3.14 setup; running pytest there skips those tests. Use the Python 3.11 launcher explicitly on Windows:
+
 ```bash
 cd artificial-life-trading-ecosystem
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-pytest
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pytest tests -q
 ```
+
+On macOS or Linux:
+
+```bash
+cd artificial-life-trading-ecosystem
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pytest tests -q
+```
+
+Confirm the active interpreter with `python --version`; it should report Python 3.11.x. Do not use Python 3.14 for the full suite because the TensorFlow-dependent forecast tests will be skipped.
 
 ## Planned layers
 

@@ -21,7 +21,11 @@ class DummyForecaster:
         return [0.01]
 
 
-def test_run_experiment_rejects_silent_heuristic_fallback() -> None:
+def test_run_experiment_rejects_silent_heuristic_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_load(_model_name: str):
+        raise FileNotFoundError("missing trained model")
+
+    monkeypatch.setattr("artificial_life_trading_ecosystem.evaluation.experiment._load_saved_forecaster", fail_load)
     with pytest.raises(RuntimeError, match="trained forecaster"):
         _ensure_forecaster("SimpleRNN", allow_heuristic=False)
 
@@ -67,6 +71,9 @@ def test_daily_simulation_closes_open_positions_by_end_of_session() -> None:
         cash=10000.0,
         current_capital=10000.0,
     )
+    agent.genome.input_to_hidden.fill(0.0)
+    agent.genome.hidden_to_output.fill(0.0)
+    agent.genome.output_bias = 0.5
     engine = TradingEngine()
     result = engine.simulate_daily(agent, market, DummyForecaster(mode="trained"))
     assert result is agent

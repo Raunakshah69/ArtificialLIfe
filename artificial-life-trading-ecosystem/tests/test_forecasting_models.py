@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-pytestmark = pytest.mark.skipif(importlib.util.find_spec("tensorflow") is None, reason="TensorFlow is not installed in this environment.")
+tensorflow_required = pytest.mark.skipif(importlib.util.find_spec("tensorflow") is None, reason="TensorFlow is not installed in this environment.")
 
 from artificial_life_trading_ecosystem.models.forecasting import GRU, LSTM, SimpleRNN
 from artificial_life_trading_ecosystem.models.forecasting.base_forecaster import ForecastingModelConfig
@@ -22,6 +22,7 @@ def tiny_window_data() -> tuple[np.ndarray, np.ndarray]:
     return X, y
 
 
+@tensorflow_required
 def test_simple_rnn_builds_successfully() -> None:
     cfg = ForecastingModelConfig(model_type="SimpleRNN", sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8)
     model = SimpleRNN(config=cfg, input_shape=(30, 3), feature_names=["a", "b", "c"])
@@ -29,6 +30,7 @@ def test_simple_rnn_builds_successfully() -> None:
     assert model.model is not None
 
 
+@tensorflow_required
 def test_lstm_builds_successfully() -> None:
     cfg = ForecastingModelConfig(model_type="LSTM", sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8)
     model = LSTM(config=cfg, input_shape=(30, 3), feature_names=["a", "b", "c"])
@@ -36,6 +38,7 @@ def test_lstm_builds_successfully() -> None:
     assert model.model is not None
 
 
+@tensorflow_required
 def test_gru_builds_successfully() -> None:
     cfg = ForecastingModelConfig(model_type="GRU", sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8)
     model = GRU(config=cfg, input_shape=(30, 3), feature_names=["a", "b", "c"])
@@ -43,6 +46,7 @@ def test_gru_builds_successfully() -> None:
     assert model.model is not None
 
 
+@tensorflow_required
 def test_all_models_accept_identical_input_tensors(tiny_window_data: tuple[np.ndarray, np.ndarray]) -> None:
     X, _ = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8)
@@ -53,6 +57,7 @@ def test_all_models_accept_identical_input_tensors(tiny_window_data: tuple[np.nd
         assert preds.shape == (8,)
 
 
+@tensorflow_required
 def test_all_models_produce_identical_output_shape_conventions(tiny_window_data: tuple[np.ndarray, np.ndarray]) -> None:
     X, _ = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8)
@@ -64,6 +69,7 @@ def test_all_models_produce_identical_output_shape_conventions(tiny_window_data:
         assert preds.shape[0] == 4
 
 
+@tensorflow_required
 def test_parameter_count_is_obtained_from_actual_model(tiny_window_data: tuple[np.ndarray, np.ndarray]) -> None:
     X, _ = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8)
@@ -75,6 +81,7 @@ def test_parameter_count_is_obtained_from_actual_model(tiny_window_data: tuple[n
     assert params["model_type"] == "SimpleRNN"
 
 
+@tensorflow_required
 def test_training_runs_on_tiny_synthetic_dataset(tiny_window_data: tuple[np.ndarray, np.ndarray]) -> None:
     X, y = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8, early_stopping_patience=1)
@@ -85,6 +92,7 @@ def test_training_runs_on_tiny_synthetic_dataset(tiny_window_data: tuple[np.ndar
     assert len(history["loss"]) >= 1
 
 
+@tensorflow_required
 def test_prediction_works_after_training(tiny_window_data: tuple[np.ndarray, np.ndarray]) -> None:
     X, y = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8, early_stopping_patience=1)
@@ -96,6 +104,7 @@ def test_prediction_works_after_training(tiny_window_data: tuple[np.ndarray, np.
     assert np.isfinite(preds).all()
 
 
+@tensorflow_required
 def test_save_reload_preserves_predictions(tiny_window_data: tuple[np.ndarray, np.ndarray], tmp_path: Path) -> None:
     X, y = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8, early_stopping_patience=1)
@@ -111,6 +120,7 @@ def test_save_reload_preserves_predictions(tiny_window_data: tuple[np.ndarray, n
     assert np.allclose(original_preds, reloaded_preds, rtol=1e-4, atol=1e-4)
 
 
+@tensorflow_required
 def test_validation_evaluation_returns_mae_and_rmse(tiny_window_data: tuple[np.ndarray, np.ndarray]) -> None:
     X, y = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8, early_stopping_patience=1)
@@ -124,6 +134,7 @@ def test_validation_evaluation_returns_mae_and_rmse(tiny_window_data: tuple[np.n
     assert metrics["rmse"] >= 0.0
 
 
+@tensorflow_required
 def test_final_test_data_is_never_required_by_training_api(tiny_window_data: tuple[np.ndarray, np.ndarray]) -> None:
     X, y = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8, early_stopping_patience=1)
@@ -133,6 +144,7 @@ def test_final_test_data_is_never_required_by_training_api(tiny_window_data: tup
     assert model.model is not None
 
 
+@tensorflow_required
 def test_fixed_seeds_produce_reproducible_model_construction(tiny_window_data: tuple[np.ndarray, np.ndarray]) -> None:
     X, y = tiny_window_data
     cfg = ForecastingModelConfig(sequence_length=30, hidden_units=8, dropout=0.20, learning_rate=0.001, epochs=2, batch_size=8)

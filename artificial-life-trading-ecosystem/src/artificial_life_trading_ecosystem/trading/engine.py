@@ -190,6 +190,66 @@ class TradingEngine:
         agent._append_equity(price=float(row.get("Close", row.get("ClosePrice", 0.0))))
         return {"action": action, "reason": "HOLD", "score": float(action_info["score"]) }
 
+    def simulate_daily_step(self, agent: Agent, row: pd.Series, forecast: float, context: list[float]) -> dict[str, Any]:
+        """Execute a decision from prior-day inputs and close all exposure by today's close."""
+        cash_before = float(agent.cash)
+        trade_start = len(agent.trade_history)
+        decision = agent.decide(forecast, context)
+        action = str(decision["action"])
+        entry: dict[str, Any] | None = None
+        exit_event: dict[str, Any] | None = None
+
+        if action == "BUY" and agent.position_quantity <= 0:
+            entry_row = row.copy()
+            entry_row["Close"] = float(row.get("Open", row.get("open", row.get("Close", 0.0))))
+            self.open_long(agent, entry_row, action="BUY", reason="ENTRY")
+            if len(agent.trade_history) > trade_start:
+                entry = agent.trade_history[-1]
+
+        if agent.position_quantity > 0:
+            exit_reason, exit_price = self._trigger_exit(agent, row)
+            reason = exit_reason or "END_OF_DAY"
+            self.close_position(agent, row, action="SELL", reason=reason)
+            if len(agent.trade_history) > trade_start:
+                exit_event = agent.trade_history[-1]
+            if exit_event is not None and exit_price is not None:
+                exit_event["price"] = float(exit_price)
+            agent._append_equity(price=float(row.get("Close", row.get("ClosePrice", 0.0))))
+        else:
+            agent._append_equity(price=float(row.get("Close", row.get("ClosePrice", 0.0))))
+
+        trades = agent.trade_history[trade_start:]
+        daily_pnl = float(agent.cash - cash_before)
+        agent.statistics.setdefault("daily_pnl", []).append(daily_pnl)
+        return {
+            "agent_id": agent.agent_id,
+            "forecast": float(forecast),
+            "decision_score": float(decision["score"]),
+            "threshold": float(decision["threshold"]),
+            "action": action,
+            "signal": float(decision.get("signal", decision["score"])),
+            "position": float(agent.position_quantity),
+            "daily_pnl": daily_pnl,
+            "capital": float(agent.cash),
+            "trade_count": len(agent.trade_history),
+            "entry": self._trade_event_summary(entry),
+            "exit": self._trade_event_summary(exit_event),
+            "trades": [self._trade_event_summary(trade) for trade in trades],
+        }
+
+    @staticmethod
+    def _trade_event_summary(trade: dict[str, Any] | None) -> dict[str, Any] | None:
+        if trade is None:
+            return None
+        return {
+            "timestamp": str(trade["timestamp"]),
+            "action": trade["action"],
+            "price": float(trade["price"]),
+            "quantity": float(trade["quantity"]),
+            "realized_pnl": float(trade["realized_pnl"]),
+            "reason": trade["reason"],
+        }
+
     def _forecast_for_day(self, market: pd.DataFrame, idx: int, forecaster: Any | None, *, feature_columns: list[str] | None = None) -> float:
         if forecaster is None:
             return 0.0
@@ -208,9 +268,7 @@ class TradingEngine:
         if len(history) == 0:
             return 0.0
         if len(history) < model_sequence:
-            pad_rows = model_sequence - len(history)
-            pad = pd.DataFrame(0.0, index=range(pad_rows), columns=feature_columns)
-            history = pd.concat([pad, history.loc[:, feature_columns]], ignore_index=True)
+            return 0.0
         window = history.loc[:, feature_columns].tail(model_sequence).to_numpy(dtype=float)
         prediction = forecaster.predict(window[np.newaxis, :, :])
         values = np.asarray(prediction, dtype=np.float64).reshape(-1)
@@ -227,13 +285,10 @@ class TradingEngine:
             agent.equity_history = [float(agent.current_capital)]
 
         for idx, row in market.iterrows():
-            forecast = self._forecast_for_day(market, idx, forecaster, feature_columns=feature_columns)
             previous_history = market.iloc[:idx].copy()
+            forecast = self._forecast_for_day(previous_history, len(previous_history) - 1, forecaster, feature_columns=feature_columns) if not previous_history.empty else 0.0
             context = self._normalized_context(previous_history, max(0, len(previous_history) - 1)) if not previous_history.empty else [0.0] * self.context_length
-            self.step(agent, row, forecast, context)
-            if agent.position_quantity > 0:
-                self.close_position(agent, row, action="SELL", reason="END_OF_DAY")
-                agent._append_equity(price=float(row.get("Close", row.get("ClosePrice", 0.0))))
+            self.simulate_daily_step(agent, row, forecast, context)
 
         agent.statistics["equity_curve"] = list(agent.equity_history)
         agent.statistics["ending_capital"] = float(agent.cash)

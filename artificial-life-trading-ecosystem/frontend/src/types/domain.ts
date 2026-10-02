@@ -196,3 +196,126 @@ export interface PopulationState {
     genome: Record<string, number | string | boolean>;
   }>;
 }
+
+export type GenerationLifecycle = 'READY' | 'RUNNING' | 'EVALUATED';
+export type LineageLifecycle = 'READY' | 'ALIVE' | 'DEAD';
+
+export interface RuntimeTrade {
+  timestamp: string;
+  action: string;
+  price: number;
+  quantity: number;
+  transaction_cost?: number;
+  realized_pnl: number;
+  reason: string;
+}
+
+export interface RuntimeAgent {
+  agent_id: string;
+  generation: number;
+  status: string;
+  alive: boolean;
+  starting_capital: number;
+  ending_capital: number | null;
+  capital: number;
+  forecast: number | null;
+  decision_score: number | null;
+  threshold: number;
+  action: string;
+  position: number;
+  daily_pnl: number;
+  trade_count: number;
+  trade_history: RuntimeTrade[];
+  equity_curve: number[];
+  parent_a: string | null;
+  parent_b: string | null;
+  immigrant: boolean;
+  elite: boolean;
+}
+
+export interface RuntimeDecision extends Omit<RuntimeAgent, 'status' | 'alive' | 'starting_capital' | 'ending_capital' | 'capital' | 'trade_history' | 'equity_curve' | 'parent_a' | 'parent_b' | 'immigrant' | 'elite'> {
+  forecast: number;
+  decision_score: number;
+  capital: number;
+  signal: number;
+  entry: RuntimeTrade | null;
+  exit: RuntimeTrade | null;
+  trades: RuntimeTrade[];
+}
+
+export interface RuntimeDailyEvent {
+  generation: number;
+  day: number;
+  date: string;
+  counts: Record<'BUY' | 'HOLD' | 'SELL', number>;
+  trade_count: number;
+  best_capital: number;
+  mean_capital: number;
+  worst_capital: number;
+  agents: RuntimeDecision[];
+}
+
+export interface RuntimeGeneration {
+  generation: number;
+  status: GenerationLifecycle;
+  day: number;
+  metrics: Record<string, number | string> | null;
+  agents: RuntimeAgent[];
+  daily_events: RuntimeDailyEvent[];
+  best_agent_id?: string;
+  strategy_curves?: Record<string, number[]>;
+}
+
+export interface RuntimeLineage {
+  agent_id: string;
+  parent_a: string | null;
+  parent_b: string | null;
+  parent_ids: string[];
+  offspring_ids: string[];
+  generation: number;
+  reproduction_method: string;
+  mutation_applied: boolean;
+  immigrant: boolean;
+  status: LineageLifecycle;
+  metadata: Record<string, unknown>;
+}
+
+export interface SimulationState {
+  experiment_id: string;
+  data_split: 'evolution-development';
+  final_test_access: false;
+  generation: number;
+  status: GenerationLifecycle;
+  day: number;
+  generation_days: number;
+  date: string | null;
+  counts: Record<'BUY' | 'HOLD' | 'SELL', number>;
+  trade_count: number;
+  best_capital: number;
+  mean_capital: number;
+  worst_capital: number;
+  agents: RuntimeAgent[];
+  generations: RuntimeGeneration[];
+  daily_events: RuntimeDailyEvent[];
+  lineage: RuntimeLineage[];
+  strategy_curves: Record<string, number[]>;
+  remaining_development_days: number;
+}
+
+export interface AvailableExperiment {
+  experiment_id: string;
+  model_name: 'SimpleRNN' | 'LSTM' | 'GRU';
+  label: string;
+  data_split: 'evolution-development';
+  final_test_access: false;
+}
+
+export interface RuntimeBacktest {
+  generation: number;
+  data_split: 'evolution-development';
+  selected_agent: RuntimeAgent | null;
+  best_lineage: RuntimeAgent | null;
+  manual_baseline: number[];
+  buy_and_hold: number[];
+  final_test_enabled: false;
+}

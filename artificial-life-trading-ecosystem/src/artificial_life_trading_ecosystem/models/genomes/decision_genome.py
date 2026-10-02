@@ -98,9 +98,11 @@ class DecisionGenome:
     ) -> "DecisionGenome":
         rng = np.random.default_rng(seed)
         input_dim = context_length + 1
-        input_to_hidden = rng.normal(0.0, 0.1, size=(input_dim, hidden_units)).astype(np.float32)
+        input_scale = np.sqrt(2.0 / (input_dim + hidden_units))
+        output_scale = np.sqrt(2.0 / (hidden_units + 1))
+        input_to_hidden = rng.normal(0.0, input_scale, size=(input_dim, hidden_units)).astype(np.float32)
         hidden_bias = np.zeros(hidden_units, dtype=np.float32)
-        hidden_to_output = rng.normal(0.0, 0.1, size=(hidden_units,)).astype(np.float32)
+        hidden_to_output = rng.normal(0.0, output_scale, size=(hidden_units,)).astype(np.float32)
         output_bias = 0.0
         return cls(
             context_length=context_length,

@@ -63,6 +63,8 @@ class Population:
         self.lineage: dict[str, LineageRecord] = {}
         self.agents: list[Agent] = []
         self.generation_history: list[dict[str, Any]] = []
+        self.daily_events: list[dict[str, Any]] = []
+        self.day_count = 0
         self._agent_counter = 0
         self._init_population()
 
@@ -86,6 +88,7 @@ class Population:
                 config={"seed": self.seed},
             )
             agent.alive = True
+            agent.status = "READY"
             agent.statistics["immigrant"] = False
             self.agents.append(agent)
             self.lineage[agent.agent_id] = LineageRecord(
@@ -113,39 +116,112 @@ class Population:
             outputs[idx] = float(np.asarray(prediction).reshape(-1)[0])
         return outputs
 
-    def evaluate_generation(self, market: pd.DataFrame, *, feature_columns: list[str] | None = None) -> list[Agent]:
+    def evaluate_generation(
+        self,
+        market: pd.DataFrame,
+        *,
+        feature_columns: list[str] | None = None,
+        history_prefix: pd.DataFrame | None = None,
+    ) -> list[Agent]:
+        if market.empty:
+            raise ValueError("A generation cannot be evaluated without trading days.")
+        if self.generation_status != GenerationStatus.READY:
+            raise RuntimeError("Only a READY generation can begin evaluation.")
         self.generation_status = GenerationStatus.RUNNING
-        forecasts = self._shared_forecast(market, feature_columns=feature_columns) if self.forecaster is not None else [0.0] * len(market)
-        for idx, row in market.iterrows():
-            forecast = forecasts[idx] if idx < len(forecasts) else 0.0
-            context = self.engine._normalized_context(market.iloc[: idx + 1], idx)
-            for agent in self.agents:
-                self.engine.step(agent, row, forecast, context)
-            for agent in self.agents:
-                if agent.position_quantity > 0:
-                    self.engine.close_position(agent, row, action="SELL", reason="END_OF_DAY")
-                    agent._append_equity(price=float(row.get("Close", row.get("ClosePrice", 0.0))))
+        for agent in self.agents:
+            agent.status = "RUNNING"
+        prefix = history_prefix.copy() if history_prefix is not None else market.iloc[:0].copy()
+        if feature_columns is None and self.forecaster is not None:
+            model_columns = getattr(self.forecaster, "feature_names", None)
+            feature_columns = list(model_columns) if model_columns else [col for col in market.columns if col not in {"Date", "date"}]
+        for day_index, (_, row) in enumerate(market.iterrows()):
+            prior_market = pd.concat([prefix, market.iloc[:day_index]], ignore_index=True)
+            if self.forecaster is not None and not prior_market.empty:
+                forecast = self.engine._forecast_for_day(
+                    prior_market,
+                    len(prior_market) - 1,
+                    self.forecaster,
+                    feature_columns=feature_columns,
+                )
+            else:
+                forecast = 0.0
+            context = self.engine._normalized_context(prior_market, len(prior_market) - 1) if not prior_market.empty else [0.0] * self.engine.context_length
+            decisions = [self.engine.simulate_daily_step(agent, row, forecast, context) for agent in self.agents]
+            counts = {action: sum(decision["action"] == action for decision in decisions) for action in ("BUY", "HOLD", "SELL")}
+            capitals = [float(agent.cash) for agent in self.agents]
+            self.daily_events.append(
+                {
+                    "generation": self.generation,
+                    "day": day_index + 1,
+                    "date": str(row.get("Date", row.get("date", row.name))),
+                    "counts": counts,
+                    "trade_count": sum(len(decision["trades"]) for decision in decisions),
+                    "best_capital": max(capitals, default=0.0),
+                    "mean_capital": float(np.mean(capitals)) if capitals else 0.0,
+                    "worst_capital": min(capitals, default=0.0),
+                    "agents": decisions,
+                }
+            )
+            self.day_count = day_index + 1
         for agent in self.agents:
             agent.statistics["ending_capital"] = float(agent.cash)
-            agent.statistics["survival_status"] = "READY" if agent.statistics.get("ending_capital") is None else "EVALUATED"
+            agent.statistics["survival_status"] = "EVALUATED"
         self.generation_status = GenerationStatus.EVALUATED
         return self.agents
 
+    def reproduce_next_generation(self) -> list[Agent]:
+        if self.generation_status != GenerationStatus.EVALUATED:
+            raise RuntimeError("Reproduction requires an evaluated generation.")
+        self.mark_dead_agents()
+        survivors = self.surviving_agents()
+        next_generation = self.generation + 1
+        if not survivors:
+            children = self.make_immigrants(count=self.population_size)
+        else:
+            ranked = sorted(survivors, key=lambda agent: float(agent.statistics["ending_capital"]), reverse=True)
+            elite_count = min(max(0, self.elite_count), len(ranked), self.population_size)
+            children = self.preserve_elite(ranked[:elite_count])
+            parents = self.capital_weighted_selection(survivors)
+            while len(children) < self.population_size:
+                if len(parents) >= 2:
+                    parent_a, parent_b = self.rng.choice(parents, size=2, replace=len(parents) < 2)
+                    children.append(self.create_child(parent_a=parent_a, parent_b=parent_b, generation=next_generation))
+                elif parents:
+                    children.append(self.create_child(parent_a=parents[0], parent_b=None, generation=next_generation, method="asexual"))
+                else:
+                    children.extend(self.make_immigrants(count=self.population_size - len(children)))
+        self.agents = children[:self.population_size]
+        self.generation = next_generation
+        self.generation_status = GenerationStatus.READY
+        self.day_count = 0
+        return self.agents
+
     def eligible_parents(self) -> list[Agent]:
-        return [agent for agent in self.agents if bool(agent.alive) and float(agent.statistics.get("ending_capital", agent.cash)) >= self.starting_capital * self.survival_threshold]
+        if self.generation_status != GenerationStatus.EVALUATED:
+            return []
+        return [agent for agent in self.agents if agent.status == "ALIVE" and bool(agent.alive) and float(agent.statistics.get("ending_capital", 0.0)) >= self.starting_capital * self.survival_threshold]
 
     def surviving_agents(self) -> list[Agent]:
-        return [agent for agent in self.agents if bool(agent.alive) and float(agent.statistics.get("ending_capital", agent.cash)) >= self.starting_capital * self.survival_threshold and len(agent.trade_history) > 0]
+        if self.generation_status != GenerationStatus.EVALUATED:
+            return []
+        return [agent for agent in self.agents if agent.status == "ALIVE" and bool(agent.alive) and float(agent.statistics.get("ending_capital", 0.0)) >= self.starting_capital * self.survival_threshold]
 
     def mark_dead_agents(self) -> int:
+        if self.generation_status != GenerationStatus.EVALUATED:
+            raise RuntimeError("Only evaluated generations can assign survival status.")
         dead_count = 0
         for agent in self.agents:
-            ending = float(agent.statistics.get("ending_capital", agent.cash))
-            zero_trade = len(agent.trade_history) == 0
-            if not agent.alive or ending < self.starting_capital * self.survival_threshold or zero_trade:
+            ending = float(agent.statistics["ending_capital"])
+            if ending < self.starting_capital * self.survival_threshold:
                 agent.alive = False
-                agent.statistics["dead_reason"] = "threshold" if ending < self.starting_capital * self.survival_threshold else "zero_trade"
+                agent.status = "DEAD"
+                self.lineage[agent.agent_id].status = "DEAD"
+                agent.statistics["dead_reason"] = "threshold"
                 dead_count += 1
+            else:
+                agent.alive = True
+                agent.status = "ALIVE"
+                self.lineage[agent.agent_id].status = "ALIVE"
         return dead_count
 
     @staticmethod
@@ -213,6 +289,8 @@ class Population:
                 arr = arr.astype(np.float64)
                 arr[mask] += rng.normal(0.0, mutation_sigma, size=np.count_nonzero(mask))
                 setattr(child, attr_name, arr.astype(np.float32))
+        if rng.random() < mutation_rate:
+            child.output_bias = float(np.clip(child.output_bias + rng.normal(0.0, mutation_sigma), -1.0, 1.0))
         for param_name in ["signal_threshold", "position_size", "stop_loss", "take_profit", "transaction_cost"]:
             if rng.random() < mutation_rate:
                 current = float(getattr(child, param_name))
@@ -226,6 +304,13 @@ class Population:
                 else:
                     clipped = float(np.clip(mutated, 0.0, 0.5))
                 setattr(child, param_name, clipped)
+        child.trading_params = {
+            "signal_threshold": float(child.signal_threshold),
+            "position_size": float(child.position_size),
+            "stop_loss": float(child.stop_loss),
+            "take_profit": float(child.take_profit),
+            "transaction_cost": float(child.transaction_cost),
+        }
         return child
 
     def capital_weighted_selection(self, candidates: list[Agent]) -> list[Agent]:
@@ -260,10 +345,10 @@ class Population:
                 transaction_cost=float(elite.genome.transaction_cost),
             )
             clone = Agent(
-                agent_id=elite.agent_id,
+                agent_id=self._new_agent_id(),
                 generation=self.generation + 1,
-                parent_a=elite.parent_a,
-                parent_b=elite.parent_b,
+                parent_a=elite.agent_id,
+                parent_b=None,
                 genome=cloner,
                 starting_capital=self.starting_capital,
                 cash=self.starting_capital,
@@ -271,9 +356,21 @@ class Population:
                 config={"seed": self.seed},
             )
             clone.alive = True
+            clone.status = "READY"
             clone.statistics["immigrant"] = False
             clone.statistics["elite"] = True
             preserved.append(clone)
+            self.lineage[clone.agent_id] = LineageRecord(
+                agent_id=clone.agent_id,
+                parent_a=elite.agent_id,
+                generation=self.generation + 1,
+                reproduction_method="elite",
+                mutation_applied=False,
+                immigrant=False,
+                status="READY",
+                metadata={"origin": "elite"},
+            )
+            self.lineage[elite.agent_id].offspring_ids.append(clone.agent_id)
         return preserved
 
     def make_immigrants(self, *, count: int | None = None) -> list[Agent]:
@@ -293,6 +390,7 @@ class Population:
                 config={"seed": self.seed},
             )
             agent.alive = True
+            agent.status = "READY"
             agent.statistics["immigrant"] = True
             immigrants.append(agent)
             self.lineage[agent.agent_id] = LineageRecord(
@@ -301,6 +399,7 @@ class Population:
                 reproduction_method="immigrant",
                 mutation_applied=False,
                 immigrant=True,
+                status="READY",
                 metadata={"origin": "immigrant"},
             )
         return immigrants
@@ -329,6 +428,7 @@ class Population:
             config={"seed": self.seed},
         )
         child.alive = True
+        child.status = "READY"
         child.statistics["immigrant"] = False
         self.lineage[child.agent_id] = LineageRecord(
             agent_id=child.agent_id,
@@ -338,8 +438,12 @@ class Population:
             reproduction_method=method,
             mutation_applied=(method in {"sexual", "asexual"}),
             immigrant=False,
+            status="READY",
             metadata={"method": method},
         )
+        for parent in (parent_a, parent_b):
+            if parent is not None and child.agent_id not in self.lineage[parent.agent_id].offspring_ids:
+                self.lineage[parent.agent_id].offspring_ids.append(child.agent_id)
         return child
 
     def asexual_fallback(self, survivors: list[Agent], *, target_count: int) -> list[Agent]:
@@ -351,20 +455,7 @@ class Population:
         return self.asexual_fallback(survivors, target_count=target_count)
 
     def zero_survivor_fallback(self, *, target_count: int) -> list[Agent]:
-        return [
-            Agent(
-                agent_id=self._new_agent_id(),
-                generation=self.generation + 1,
-                parent_a=None,
-                parent_b=None,
-                genome=DecisionGenome.from_default(seed=int(self.rng.integers(0, 10_000_000))),
-                starting_capital=self.starting_capital,
-                cash=self.starting_capital,
-                current_capital=self.starting_capital,
-                config={"seed": self.seed},
-            )
-            for _ in range(target_count)
-        ]
+        return self.make_immigrants(count=target_count)
 
     def genetic_diversity(self, agents: list[Agent]) -> float:
         if len(agents) < 2:
@@ -377,8 +468,8 @@ class Population:
 
     def compute_generation_statistics(self, agents: list[Agent], generation: int) -> dict[str, Any]:
         ending_capitals = [float(agent.statistics.get("ending_capital", agent.cash)) for agent in agents]
-        alive = [agent for agent in agents if bool(agent.alive) and float(agent.statistics.get("ending_capital", agent.cash)) >= self.starting_capital * self.survival_threshold and len(agent.trade_history) > 0]
-        dead = [agent for agent in agents if not (bool(agent.alive) and float(agent.statistics.get("ending_capital", agent.cash)) >= self.starting_capital * self.survival_threshold and len(agent.trade_history) > 0)]
+        alive = [agent for agent in agents if agent.status == "ALIVE" and bool(agent.alive) and float(agent.statistics.get("ending_capital", 0.0)) >= self.starting_capital * self.survival_threshold]
+        dead = [agent for agent in agents if agent.status == "DEAD"]
         stats = {
             "generation": int(generation),
             "population_size": len(agents),
@@ -414,15 +505,14 @@ class EvolutionEngine:
             raise ValueError("At least one walk-forward epoch is required to evolve a population.")
         cfg = PopulationConfig(population_size=population_size, seed=int(seed if seed is not None else self.seed))
         population = Population(cfg, forecaster=forecaster)
-        for epoch_index, epoch in enumerate(epochs[: self.generation_count or len(epochs)]):
+        selected_epochs = epochs[: self.generation_count or len(epochs)]
+        for epoch_index, epoch in enumerate(selected_epochs):
             if epoch.empty:
                 raise ValueError(f"Epoch {epoch_index} is empty and cannot be used for evolution.")
             population.evaluate_generation(epoch)
             population.mark_dead_agents()
-            population.agents = population.surviving_agents()[: population.population_size]
-            if not population.agents:
-                population.agents = population.zero_survivor_fallback(target_count=population.population_size)
-            population.generation = epoch_index
+            if epoch_index + 1 < len(selected_epochs):
+                population.reproduce_next_generation()
         return population
 
     def evaluate_population(self, population: Population, market: pd.DataFrame, forecaster: Any | None = None) -> Population:
@@ -442,10 +532,8 @@ class EvolutionEngine:
                 raise ValueError(f"Epoch {epoch_index} is empty and cannot be used for evolution.")
             population.evaluate_generation(epoch)
             population.mark_dead_agents()
-            population.agents = population.surviving_agents()[: population.population_size]
-            if not population.agents:
-                population.agents = population.zero_survivor_fallback(target_count=population.population_size)
-            population.generation = epoch_index
+            if epoch_index + 1 < len(epochs):
+                population.reproduce_next_generation()
         return population
 
 

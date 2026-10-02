@@ -57,6 +57,54 @@ def test_genome_produces_deterministic_decision_output() -> None:
     assert -1.0 <= score1 <= 1.0
 
 
+def test_decision_head_uses_forecast_and_context_as_neural_inputs() -> None:
+    genome = DecisionGenome.from_default(signal_threshold=0.2, seed=101)
+    genome.input_to_hidden.fill(0.0)
+    genome.hidden_to_output.fill(0.0)
+    genome.input_to_hidden[0, 0] = 1.0
+    genome.input_to_hidden[1, 1] = 1.0
+    genome.hidden_to_output[:2] = 1.0
+    agent = Agent(agent_id="a", genome=genome, starting_capital=100000.0)
+
+    baseline_score = agent.decision_score(0.0, [0.0] * 5)
+    forecast_score = agent.decision_score(0.5, [0.0] * 5)
+    context_score = agent.decision_score(0.0, [0.5, 0.0, 0.0, 0.0, 0.0])
+
+    assert baseline_score == 0.0
+    assert forecast_score > baseline_score
+    assert context_score > baseline_score
+
+
+def test_context_cannot_override_genome_score_threshold() -> None:
+    genome = DecisionGenome.from_default(signal_threshold=0.2, seed=102)
+    genome.input_to_hidden.fill(0.0)
+    genome.hidden_to_output.fill(0.0)
+    genome.output_bias = 0.1
+    genome.trading_params["signal_threshold"] = 0.2
+    agent = Agent(agent_id="a", genome=genome, starting_capital=100000.0)
+
+    decision = agent.decide(0.0, [-1.0, -1.0, 1.0, 1.0, 1.0])
+
+    assert decision["score"] == pytest.approx(0.1)
+    assert decision["action"] == "HOLD"
+
+
+def test_evolved_output_bias_changes_action_without_changing_threshold() -> None:
+    genome = DecisionGenome.from_default(signal_threshold=0.2, seed=103)
+    genome.input_to_hidden.fill(0.0)
+    genome.hidden_to_output.fill(0.0)
+    agent = Agent(agent_id="a", genome=genome, starting_capital=100000.0)
+
+    genome.output_bias = 0.3
+    buy = agent.decide(0.0, [0.0] * 5)
+    genome.output_bias = -0.3
+    sell = agent.decide(0.0, [0.0] * 5)
+
+    assert buy["threshold"] == sell["threshold"] == 0.2
+    assert buy["action"] == "BUY"
+    assert sell["action"] == "SELL"
+
+
 def test_buy_opens_position() -> None:
     genome = DecisionGenome.from_default(signal_threshold=0.1, seed=1)
     agent = Agent(agent_id="a", genome=genome, starting_capital=100000.0)
@@ -84,6 +132,9 @@ def test_hold_preserves_position() -> None:
 
 def test_sell_closes_position() -> None:
     genome = DecisionGenome.from_default(signal_threshold=0.1, seed=3)
+    genome.input_to_hidden.fill(0.0)
+    genome.hidden_to_output.fill(0.0)
+    genome.output_bias = -0.5
     agent = Agent(agent_id="a", genome=genome, starting_capital=100000.0)
     agent.position_quantity = 10.0
     agent.entry_price = 100.0

@@ -34,6 +34,7 @@ class Agent:
     trade_history: list[dict[str, Any]] = field(default_factory=list)
     equity_history: list[float] = field(default_factory=list)
     alive: bool = True
+    status: str = "READY"
     statistics: dict[str, Any] = field(default_factory=dict)
     config: dict[str, Any] = field(default_factory=dict)
 
@@ -138,21 +139,13 @@ class Agent:
 
     def decide(self, forecast: float, context: list[float] | np.ndarray) -> dict[str, Any]:
         score = self.decision_score(forecast, context)
-        ctx = np.asarray(context, dtype=np.float32).reshape(-1)
-        trend_component = float(np.mean(ctx[-min(5, ctx.size):])) if ctx.size else 0.0
-        signal = float(forecast) + 0.25 * score + 0.05 * trend_component
-
-        rising = bool(ctx.size >= 2 and float(ctx[-1]) >= float(np.mean(ctx[-min(3, ctx.size):])))
-        uptrend = bool(ctx.size >= 3 and float(np.mean(ctx[-3:])) > 0.0 and rising)
-        downtrend = bool(ctx.size >= 3 and float(np.mean(ctx[-3:])) < 0.0 and not rising)
-
-        if signal >= self.threshold or (forecast > 0.0 and uptrend and signal > 0.0):
+        if score >= self.threshold:
             action = "BUY"
-        elif signal <= -self.threshold or (forecast < 0.0 and downtrend and signal < 0.0):
+        elif score <= -self.threshold:
             action = "SELL"
         else:
             action = "HOLD"
-        return {"action": action, "score": score, "threshold": self.threshold, "signal": signal}
+        return {"action": action, "score": score, "threshold": self.threshold, "signal": score}
 
     def position_value(self, price: float) -> float:
         return self.position_quantity * float(price)

@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from artificial_life_trading_ecosystem.agents.agent import Agent
-from artificial_life_trading_ecosystem.evolution.population import EvolutionEngine, Population, PopulationConfig
+from artificial_life_trading_ecosystem.evolution.population import EvolutionEngine, GenerationStatus, Population, PopulationConfig
 from artificial_life_trading_ecosystem.models.genomes.decision_genome import DecisionGenome
 
 
@@ -94,7 +94,7 @@ def test_forecast_is_computed_once_per_timestep() -> None:
     )
     population = Population(PopulationConfig(population_size=4, seed=9), forecaster=forecaster)
     engine.evaluate_population(population, epoch, forecaster)
-    assert forecaster.calls == len(epoch) - (forecaster.config.sequence_length - 1)
+    assert forecaster.calls == len(epoch) - forecaster.config.sequence_length
 
 
 def test_population_uses_complete_history_only_for_forecast_windows() -> None:
@@ -127,9 +127,11 @@ def test_population_uses_complete_history_only_for_forecast_windows() -> None:
 def test_dead_agents_cannot_reproduce() -> None:
     cfg = PopulationConfig(population_size=4, seed=10, survival_threshold=0.90)
     population = Population(cfg)
+    population.generation_status = GenerationStatus.EVALUATED
     for agent in population.agents:
         agent.statistics["ending_capital"] = 50000.0
         agent.alive = True
+        agent.status = "ALIVE"
     population.agents[0].statistics["ending_capital"] = 80000.0
     population.agents[1].statistics["ending_capital"] = 100000.0
     population.agents[2].statistics["ending_capital"] = 20000.0
@@ -139,23 +141,27 @@ def test_dead_agents_cannot_reproduce() -> None:
     assert population.agents[1].agent_id in {a.agent_id for a in eligible}
 
 
-def test_zero_trade_agents_die() -> None:
+def test_zero_trade_agents_survive_when_capital_meets_threshold() -> None:
     cfg = PopulationConfig(population_size=5, seed=11)
     population = Population(cfg)
+    population.generation_status = GenerationStatus.EVALUATED
     for agent in population.agents:
         agent.trade_history = []
-        agent.statistics["ending_capital"] = 10000.0
+        agent.statistics["ending_capital"] = agent.starting_capital
+        agent.status = "RUNNING"
     dead = population.mark_dead_agents()
-    assert dead == 5
-    assert all(not agent.alive for agent in population.agents)
+    assert dead == 0
+    assert all(agent.alive and agent.status == "ALIVE" for agent in population.agents)
 
 
 def test_survival_threshold_applied_correctly() -> None:
     cfg = PopulationConfig(population_size=4, starting_capital=100000.0, survival_threshold=0.90, seed=12)
     population = Population(cfg)
+    population.generation_status = GenerationStatus.EVALUATED
     for i, agent in enumerate(population.agents):
         agent.statistics["ending_capital"] = 90000.0 + i * 1000.0
         agent.alive = True
+        agent.status = "ALIVE"
         agent.trade_history = [{"action": "BUY"}]
     survivors = population.surviving_agents()
     assert len(survivors) == 4
@@ -166,8 +172,10 @@ def test_survival_threshold_applied_correctly() -> None:
 def test_capital_weighted_selection_prefers_larger_capital() -> None:
     cfg = PopulationConfig(population_size=4, seed=15)
     population = Population(cfg)
+    population.generation_status = GenerationStatus.EVALUATED
     for agent in population.agents[:2]:
         agent.alive = True
+        agent.status = "ALIVE"
         agent.statistics["ending_capital"] = 100000.0
     population.agents[2].statistics["ending_capital"] = 50000.0
     population.agents[3].statistics["ending_capital"] = 120000.0
@@ -210,6 +218,8 @@ def test_mutation_changes_child_only() -> None:
     mutated = Population.mutate_genome(child, mutation_rate=1.0, mutation_sigma=0.5, rng=np.random.default_rng(5))
     assert mutated is not parent
     assert np.allclose(parent.flatten(), child.flatten()) if child is parent else True
+    assert mutated.trading_params["signal_threshold"] == mutated.signal_threshold
+    assert mutated.output_bias != parent.output_bias
 
 
 def test_elite_genome_remains_unchanged() -> None:
@@ -284,6 +294,7 @@ def test_generation_statistics_are_consistent() -> None:
     for agent in population.agents:
         agent.statistics["ending_capital"] = 100000.0
         agent.alive = True
+        agent.status = "ALIVE"
         agent.trade_history = [{"action": "BUY"}, {"action": "SELL"}]
     stats = population.compute_generation_statistics(population.agents, 0)
     assert set(stats.keys()) >= {"generation", "population_size", "alive_count", "dead_count", "survival_rate", "genetic_diversity", "immigrant_count"}

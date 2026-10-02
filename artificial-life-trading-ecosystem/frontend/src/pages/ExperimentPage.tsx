@@ -1,47 +1,58 @@
-import { useExperiment } from '../contexts/ExperimentContext';
+import { formatCurrency, formatNumber } from '../components/format';
+import { useExperiment } from '../contexts/experiment-context';
+import { useSimulation } from '../contexts/simulation-context';
 import { getArtifactManifest } from '../data/repositories';
 
 export function ExperimentPage() {
   const experiment = useExperiment();
+  const { state, experiments, selectExperiment, busy } = useSimulation();
   const manifest = getArtifactManifest();
+  const selectedModel = state?.experiment_id.split(':').at(-1) ?? experiment.forecasting_backbone;
 
   return (
     <>
-      <section>
-        <h2>Experiment metadata</h2>
+      <section className="lead-section experiment-lead">
+        <p className="section-kicker">Technical provenance</p>
+        <div className="section-heading-row"><h2>Experiment record</h2><span className="status-label status-evaluated">{state?.data_split ?? 'RECORDED SNAPSHOT'}</span></div>
+        <div className="field-row">
+          <div><label htmlFor="experiment-model">Interactive forecasting experiment</label><select id="experiment-model" value={selectedModel} onChange={(event) => void selectExperiment(event.target.value as 'SimpleRNN' | 'LSTM' | 'GRU')} disabled={busy}>
+            {experiments.map((item) => <option key={item.experiment_id} value={item.model_name}>{item.label}</option>)}
+          </select></div>
+          <p>Each model keeps its own development-only population state.</p>
+        </div>
         <dl className="summary-grid">
           <div><dt>Experiment ID</dt><dd>{experiment.experiment_id}</dd></div>
           <div><dt>Experiment name</dt><dd>{experiment.experiment_name}</dd></div>
-          <div><dt>Timestamp</dt><dd>{new Date().toISOString()}</dd></div>
           <div><dt>Ticker</dt><dd>{experiment.ticker}</dd></div>
-          <div><dt>Source</dt><dd>Local result artifact snapshot</dd></div>
+          <div><dt>Source</dt><dd>Recorded research artifacts</dd></div>
           <div><dt>Date range</dt><dd>{experiment.start_date} — {experiment.end_date}</dd></div>
           <div><dt>Interval</dt><dd>{experiment.interval}</dd></div>
           <div><dt>Dataset hash</dt><dd>{experiment.dataset_hash ?? 'Not recorded'}</dd></div>
           <div><dt>Target mode</dt><dd>{experiment.target_mode}</dd></div>
           <div><dt>Features</dt><dd>{experiment.feature_set.join(', ')}</dd></div>
           <div><dt>Sequence length</dt><dd>{experiment.sequence_length}</dd></div>
-          <div><dt>Forecaster</dt><dd>{experiment.forecasting_backbone}</dd></div>
+          <div><dt>Selected interactive forecaster</dt><dd>{selectedModel}</dd></div>
           <div><dt>Random seed</dt><dd>{experiment.seed}</dd></div>
-          <div><dt>Population size</dt><dd>{experiment.population_size}</dd></div>
-          <div><dt>Generations</dt><dd>{experiment.generations}</dd></div>
-          <div><dt>Starting capital</dt><dd>{experiment.starting_capital}</dd></div>
-          <div><dt>Survival threshold</dt><dd>{experiment.survival_threshold}</dd></div>
-          <div><dt>Mutation rate</dt><dd>{experiment.mutation_rate}</dd></div>
-          <div><dt>Mutation sigma</dt><dd>{experiment.mutation_sigma}</dd></div>
-          <div><dt>Immigrant fraction</dt><dd>{experiment.immigrant_fraction}</dd></div>
-          <div><dt>Transaction cost</dt><dd>{experiment.transaction_cost}</dd></div>
+          <div><dt>Population size</dt><dd>{experiment.population_size} organisms</dd></div>
+          <div><dt>Generation length</dt><dd>{state?.generation_days ?? 10} trading days</dd></div>
+          <div><dt>Generation count</dt><dd>{state?.generations.filter((generation) => generation.status === 'EVALUATED').length ?? experiment.generations} evaluated</dd></div>
+          <div><dt>Starting capital</dt><dd>{formatCurrency(experiment.starting_capital)}</dd></div>
+          <div><dt>Survival threshold</dt><dd>{formatNumber(experiment.survival_threshold * 100, 0)}%</dd></div>
+          <div><dt>Mutation rate</dt><dd>{formatNumber(experiment.mutation_rate * 100, 1)}%</dd></div>
+          <div><dt>Mutation sigma</dt><dd>{formatNumber(experiment.mutation_sigma, 3)}</dd></div>
+          <div><dt>Immigrant fraction</dt><dd>{formatNumber(experiment.immigrant_fraction * 100, 1)}%</dd></div>
+          <div><dt>Transaction cost</dt><dd>{formatNumber(experiment.transaction_cost * 100, 2)}%</dd></div>
         </dl>
       </section>
 
       <section>
-        <h2>Experiment status</h2>
+        <p className="section-kicker">Artifact inventory</p><h2>Recorded measurements</h2>
         <ul className="plain-list">
-          <li>{manifest.forecasting_metrics ? '✓ forecasting metrics' : '✗ forecasting metrics'}</li>
-          <li>{manifest.generation_metrics ? '✓ generation metrics' : '✗ generation metrics'}</li>
-          <li>{manifest.lineage_data ? '✓ lineage data' : '✗ lineage data'}</li>
-          <li>{manifest.strategy_comparison ? '✓ strategy comparison' : '✗ strategy comparison'}</li>
-          <li>{manifest.final_test ? '✓ final test' : '✗ final test'}</li>
+          <li><span>Forecasting metrics</span><strong>{manifest.forecasting_metrics ? 'Recorded' : 'Not recorded'}</strong></li>
+          <li><span>Generation metrics</span><strong>{manifest.generation_metrics ? 'Recorded' : 'Not recorded'}</strong></li>
+          <li><span>Lineage data</span><strong>{manifest.lineage_data ? 'Recorded' : 'Not recorded'}</strong></li>
+          <li><span>Strategy comparison</span><strong>{manifest.strategy_comparison ? 'Recorded' : 'Not recorded'}</strong></li>
+          <li><span>Final-test results</span><strong>{manifest.final_test ? 'Recorded' : 'Not run'}</strong></li>
         </ul>
       </section>
 
